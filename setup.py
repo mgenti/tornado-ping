@@ -2,24 +2,21 @@
 from setuptools import setup
 
 setup(
-    name="aioping",
-    packages=["aioping"],
+    name="tornadio-ping",
+    packages=["tornado_ping"],
     version="0.3.1",
-    install_requires=["async_timeout", "aiodns"],
-    description="Asyncio ping implementation",
-    author="Anton Belousov",
-    author_email="anton@stellarbit.com",
-    url="https://github.com/stellarbit/aioping",
-    download_url="https://github.com/stellarbit/aioping/tarball/0.3.1",
-    keywords=["network", "icmp", "ping", "asyncio"],
+    install_requires=["tornado"],
+    description="Tornado ping implementation",
+    author="Mark Guagenti",
+    author_email="mgenti@gentiweb.com",
+    url="https://github.com/mgenti/tornado-ping",
+    download_url="https://github.com/mgenti/tornado-ping/tarball/0.3.1",
+    keywords=["network", "icmp", "ping", "tornado"],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
-        "Programming Language :: Python :: 3.5",
-        "Programming Language :: Python :: 3.6",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 2.7",
         "Topic :: Software Development :: Libraries :: Python Modules",
     ]
 )

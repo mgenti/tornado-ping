@@ -1,20 +1,21 @@
-aioping is a fast asyncio implementation of ICMP (ping) protocol.
+tornado-ping is a fast Tornado implementation of ICMP (ping) protocol.
 
+Forked from https://github.com/stellarbit/aioping to use the Tornado event loop and work with Python 2.7
 
 Installation
 ------------
 
-aioping requires Python 3.5. 
+tornado-ping requires Python 2.7.
 
 Use pip to install it from the PyPI::
 
-    $ pip install aioping
+    $ pip install tornado-ping
 
 Or use the latest version from the master (if you are brave enough)::
 
-    $ pip install git+https://github.com/stellarbit/aioping
+    $ pip install git+https://github.com/mgenti/tornado-ping
 
-Using aioping
+Using tornado-ping
 -------------
 
 There are 2 ways to use the library.
@@ -98,8 +99,10 @@ Credits
   - https://github.com/hanieljgoertz
   - https://github.com/Crypto-Spartan
 
+- Tornado version by Mark Guagenti
+
 
 License
 -------
 
-aioping is licensed under GPLv2.
+tornado-ping is licensed under GPLv2.

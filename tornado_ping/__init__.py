@@ -30,6 +30,9 @@
     Rewrite by Anton Belousov / Stellarbit LLC <anton@stellarbit.com>
        -> http://github.com/stellarbit/aioping
 
+    Modified by Mark Guagenti to work with Tornadio and Python 2.7
+       -> https://github.com/mgenti/tornado-ping
+
     Revision history
     ~~~~~~~~~~~~~~~~
 
@@ -69,30 +72,32 @@
     - asyncio & python 3.5+ adaptaion
     - PEP-8 code reformatting
 
+    June 29, 2022
+    Changes by Mark Guagenti
+    - tornadio & python 2.7 adaptation
+
     Last commit info:
     ~~~~~~~~~~~~~~~~~
     $LastChangedDate: $
     $Rev: $
     $Author: $
 """
-
 import logging
-import asyncio
-import async_timeout
-import sys
-import socket
-import struct
-import time
-import functools
-import uuid
 import random
+import socket
+import uuid
+import struct
+import timeit
+import functools
+import datetime
 
-logger = logging.getLogger("aioping")
-default_timer = time.perf_counter
-
-if sys.platform.startswith("win"):
-    if sys.version_info[0] > 3 or (sys.version_info[0] == 3 and sys.version_info[1] >= 8):
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+import tornado
+from tornado import gen
+from tornado.netutil import Resolver
+from tornado.tcpclient import _Connector
+from tornado.concurrent import Future
+from tornado.platform.auto import set_close_exec
+from tornado.util import TimeoutError
 
 # ICMP types, see rfc792 for v4, rfc4443 for v6
 ICMP_ECHO_REQUEST = 8
@@ -102,6 +107,8 @@ ICMP6_ECHO_REPLY = 129
 
 proto_icmp = socket.getprotobyname("icmp")
 proto_icmp6 = socket.getprotobyname("ipv6-icmp")
+
+log = logging.getLogger(__name__)
 
 
 def checksum(buffer):
@@ -116,14 +123,14 @@ def checksum(buffer):
     count = 0
 
     while count < count_to:
-        this_val = buffer[count + 1] * 256 + buffer[count]
+        this_val = ord(buffer[count + 1]) * 256 + ord(buffer[count])
         sum += this_val
-        sum &= 0xffffffff # Necessary?
+        sum &= 0xffffffff  # Necessary?
         count += 2
 
     if count_to < len(buffer):
-        sum += buffer[len(buffer) - 1]
-        sum &= 0xffffffff # Necessary?
+        sum += ord(buffer[len(buffer) - 1])
+        sum &= 0xffffffff  # Necessary?
 
     sum = (sum >> 16) + (sum & 0xffff)
     sum += sum >> 16
@@ -136,7 +143,8 @@ def checksum(buffer):
     return answer
 
 
-async def receive_one_ping(my_socket, id_, timeout):
+@gen.coroutine
+def receive_one_ping(my_socket, id_, timeout):
     """
     receive the ping from the socket.
     :param my_socket:
@@ -144,37 +152,39 @@ async def receive_one_ping(my_socket, id_, timeout):
     :param timeout:
     :return:
     """
-    loop = asyncio.get_event_loop()
+    future = Future()
+    tornado.ioloop.IOLoop.current().add_handler(my_socket.fileno(),
+                                                lambda fd, events: future.set_result(True),
+                                                tornado.ioloop.IOLoop.READ)
+    yield future
 
     try:
-        with async_timeout.timeout(timeout):
-            while True:
-                rec_packet = await loop.sock_recv(my_socket, 1024)
-                time_received = default_timer()
+        while True:
+            rec_packet = my_socket.recv(1024)
+            time_received = timeit.default_timer()
 
-                if my_socket.family == socket.AddressFamily.AF_INET:
-                    offset = 20
-                else:
-                    offset = 0
+            if my_socket.family == socket.AF_INET:
+                offset = 20
+            else:
+                offset = 0
 
-                icmp_header = rec_packet[offset:offset + 8]
+            icmp_header = rec_packet[offset:offset + 8]
 
-                type, code, checksum, packet_id, sequence = struct.unpack(
-                    "bbHHh", icmp_header
-                )
+            type, code, checksum, packet_id, sequence = struct.unpack(
+                "bbHHh", icmp_header
+            )
 
-                if type != ICMP_ECHO_REPLY and type != ICMP6_ECHO_REPLY:
-                    continue
+            if type != ICMP_ECHO_REPLY and type != ICMP6_ECHO_REPLY:
+                continue
 
-                if packet_id == id_:
-                    data = rec_packet[offset + 8:offset + 8 + struct.calcsize("d")]
-                    time_sent = struct.unpack("d", data)[0]
+            if packet_id == id_:
+                data = rec_packet[offset + 8:offset + 8 + struct.calcsize("d")]
+                time_sent = struct.unpack("d", data)[0]
 
-                    return time_received - time_sent
-
-    except asyncio.TimeoutError:
-        asyncio.get_event_loop().remove_writer(my_socket)
-        asyncio.get_event_loop().remove_reader(my_socket)
+                tornado.ioloop.IOLoop.current().remove_handler(my_socket.fileno())
+                raise gen.Return(time_received - time_sent)
+    except OSError:
+        tornado.ioloop.IOLoop.current().remove_handler(my_socket.fileno())
         my_socket.close()
 
         raise TimeoutError("Ping timeout")
@@ -183,17 +193,18 @@ async def receive_one_ping(my_socket, id_, timeout):
 def sendto_ready(packet, socket, future, dest):
     try:
         socket.sendto(packet, dest)
-    except (BlockingIOError, InterruptedError):
+    except OSError as exc:
         return  # The callback will be retried
     except Exception as exc:
-        asyncio.get_event_loop().remove_writer(socket)
+        tornado.ioloop.IOLoop.current().remove_handler(socket.fileno())
         future.set_exception(exc)
     else:
-        asyncio.get_event_loop().remove_writer(socket)
+        tornado.ioloop.IOLoop.current().remove_handler(socket.fileno())
         future.set_result(None)
 
 
-async def send_one_ping(my_socket, dest_addr, id_, timeout, family):
+@gen.coroutine
+def send_one_ping(my_socket, dest_addr, id_, timeout, family):
     """
     Send one ping to the given >dest_addr<.
     :param my_socket:
@@ -202,8 +213,7 @@ async def send_one_ping(my_socket, dest_addr, id_, timeout, family):
     :param timeout:
     :return:
     """
-    icmp_type = ICMP_ECHO_REQUEST if family == socket.AddressFamily.AF_INET\
-        else ICMP6_ECHO_REQUEST
+    icmp_type = ICMP_ECHO_REQUEST if family == socket.AF_INET else ICMP6_ECHO_REQUEST
 
     # Header is type (8), code (8), checksum (16), id (16), sequence (16)
     my_checksum = 0
@@ -212,7 +222,7 @@ async def send_one_ping(my_socket, dest_addr, id_, timeout, family):
     header = struct.pack("BbHHh", icmp_type, 0, my_checksum, id_, 1)
     bytes_in_double = struct.calcsize("d")
     data = (192 - bytes_in_double) * "Q"
-    data = struct.pack("d", default_timer()) + data.encode("ascii")
+    data = struct.pack("d", timeit.default_timer()) + data.encode("ascii")
 
     # Calculate the checksum on the data and the dummy header.
     my_checksum = checksum(header + data)
@@ -224,40 +234,39 @@ async def send_one_ping(my_socket, dest_addr, id_, timeout, family):
     )
     packet = header + data
 
-    future = asyncio.get_event_loop().create_future()
+    future = Future()
     callback = functools.partial(sendto_ready, packet=packet, socket=my_socket, dest=dest_addr, future=future)
-    asyncio.get_event_loop().add_writer(my_socket, callback)
+    tornado.ioloop.IOLoop.current().add_handler(my_socket.fileno(),
+                                                lambda fd, events: callback(),
+                                                tornado.ioloop.IOLoop.WRITE)
 
-    await future
+    yield future
 
 
-async def ping(dest_addr, timeout=10, family=None):
+@gen.coroutine
+def ping(dest_addr, timeout=10, family=None):
     """
-    Returns either the delay (in seconds) or raises an exception.
-    :param dest_addr:
-    :param timeout:
-    :param family:
-    """
+     Returns either the delay (in seconds) or raises an exception.
+     :param dest_addr:
+     :param timeout:
+     :param family:
+     """
+    resolver = Resolver()
+    try:
+        addrinfo = yield gen.with_timeout(datetime.timedelta(seconds=timeout),
+                                          resolver.resolve(dest_addr, 0))
+    except socket.gaierror as ex:
+        log.debug("Unable to resolve %s" % dest_addr, exc_info=1)
+        raise gen.Return(None)
 
-    loop = asyncio.get_event_loop()
-    info = await loop.getaddrinfo(dest_addr, 0)
+    log.debug("%s getaddrinfo result=%s", dest_addr, addrinfo)
 
-    logger.debug("%s getaddrinfo result=%s", dest_addr, info)
+    primary_addrs, secondary_addrs = _Connector.split(addrinfo)
+    family, addr = random.choice(primary_addrs)
 
-    if family is not None:
-        info = list(filter(lambda i: i[0] == family, info))
+    log.debug("%s resolved addr=%s", dest_addr, addr)
 
-    if len(info) == 0:
-        raise socket.gaierror("%s hostname not found for address family %s" % (dest_addr, family))
-
-    resolved = random.choice(info)
-
-    family = resolved[0]
-    addr = resolved[4]
-
-    logger.debug("%s resolved addr=%s", dest_addr, addr)
-
-    if family == socket.AddressFamily.AF_INET:
+    if family == socket.AF_INET:
         icmp = proto_icmp
     else:
         icmp = proto_icmp6
@@ -265,7 +274,7 @@ async def ping(dest_addr, timeout=10, family=None):
     try:
         my_socket = socket.socket(family, socket.SOCK_RAW, icmp)
         my_socket.setblocking(False)
-
+        set_close_exec(my_socket.fileno())
     except OSError as e:
         msg = e.strerror
 
@@ -282,14 +291,20 @@ async def ping(dest_addr, timeout=10, family=None):
 
     my_id = uuid.uuid4().int & 0xFFFF
 
-    await send_one_ping(my_socket, addr, my_id, timeout, family)
-    delay = await receive_one_ping(my_socket, my_id, timeout)
+    yield send_one_ping(my_socket, addr, my_id, timeout, family)
+    try:
+        recv_ping = receive_one_ping(my_socket, my_id, timeout)
+        delay = yield gen.with_timeout(datetime.timedelta(seconds=timeout),
+                                       recv_ping)
+    except TimeoutError:
+        gen.Return(None)
     my_socket.close()
 
-    return delay
+    raise gen.Return(delay)
 
 
-async def verbose_ping(dest_addr, timeout=2, count=3, family=None):
+@gen.coroutine
+def verbose_ping(dest_addr, timeout=2, count=3, family=None):
     """
     Send >count< ping to >dest_addr< with the given >timeout< and display
     the result.
@@ -298,17 +313,32 @@ async def verbose_ping(dest_addr, timeout=2, count=3, family=None):
     :param count:
     :param family:
     """
+    responses = []
+
     for i in range(count):
         delay = None
 
         try:
-            delay = await ping(dest_addr, timeout, family)
+            delay = yield ping(dest_addr, timeout, family)
         except TimeoutError as e:
-            logger.error("%s timed out after %ss" % (dest_addr, timeout))
+            log.error("%s timed out after %ss" % (dest_addr, timeout))
         except Exception as e:
-            logger.error("%s failed: %s" % (dest_addr, str(e)))
+            log.error("%s failed: %s" % (dest_addr, str(e)))
             break
+
+        responses.append(delay)
 
         if delay is not None:
             delay *= 1000
-            logger.info("%s get ping in %0.4fms" % (dest_addr, delay))
+            log.info("%s get ping in %0.4fms" % (dest_addr, delay))
+
+    raise gen.Return(responses)
+
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
+
+    tornado.ioloop.IOLoop.current().add_timeout(datetime.timedelta(seconds=10),
+                                                tornado.ioloop.IOLoop.current().stop)
+    tornado.ioloop.IOLoop.instance().spawn_callback(verbose_ping, '8.8.8.8')
+    tornado.ioloop.IOLoop.instance().start()
