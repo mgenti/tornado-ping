@@ -26,33 +26,31 @@ root is allowed to send ICMP packets:
 
 .. code:: python
 
-    import asyncio
-    import aioping
+    import tornado_ping
     import logging
+    import tornado
 
     logging.basicConfig(level=logging.INFO)     # or logging.DEBUG
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(aioping.verbose_ping("google.com"))
+    tornado.ioloop.IOLoop.instance().run_sync(lambda: verbose_ping('8.8.8.8'))
 
 Alternatively, you can call a ping function, which returns a
-ping delay in milliseconds or throws an exception in case of
-error:
+ping delay in milliseconds or returns None in case of an error:
 
 .. code:: python
 
-    import asyncio
-    import aioping
+    import tornado_ping
+    import tornado
 
-    async def do_ping(host):
-        try:
-            delay = await aioping.ping(host) * 1000
-            print("Ping response in %s ms" % delay)
+    @gen.coroutine
+    def do_ping(host):
+        delay = yield ping(host)
+        if delay:
+            print "Ping response in %s ms" % (delay * 1000, )
+        else:
+            print "Timed out"
 
-        except TimeoutError:
-            print("Timed out")
 
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(do_ping("google.com"))
+    tornado.ioloop.IOLoop.instance().run_sync(lambda: do_ping('8.8.8.8'))
 
 Methods
 -------

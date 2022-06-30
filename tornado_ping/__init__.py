@@ -338,7 +338,15 @@ def verbose_ping(dest_addr, timeout=2, count=3, family=None):
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
 
-    tornado.ioloop.IOLoop.current().add_timeout(datetime.timedelta(seconds=10),
-                                                tornado.ioloop.IOLoop.current().stop)
-    tornado.ioloop.IOLoop.instance().spawn_callback(verbose_ping, '8.8.8.8')
-    tornado.ioloop.IOLoop.instance().start()
+    tornado.ioloop.IOLoop.instance().run_sync(lambda: verbose_ping('8.8.8.8'))
+
+    @gen.coroutine
+    def do_ping(host):
+        delay = yield ping(host)
+        if delay:
+            print "Ping response in %s ms" % (delay * 1000, )
+        else:
+            print "Timed out"
+
+
+    tornado.ioloop.IOLoop.instance().run_sync(lambda: do_ping('8.8.8.8'))
