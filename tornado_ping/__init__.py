@@ -183,7 +183,7 @@ def receive_one_ping(my_socket, id_, timeout):
 
                 tornado.ioloop.IOLoop.current().remove_handler(my_socket.fileno())
                 raise gen.Return(time_received - time_sent)
-    except OSError:
+    except (OSError, socket.error):
         tornado.ioloop.IOLoop.current().remove_handler(my_socket.fileno())
         my_socket.close()
 
