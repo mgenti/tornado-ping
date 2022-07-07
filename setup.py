@@ -4,7 +4,7 @@ from setuptools import setup
 setup(
     name="tornado-ping",
     packages=["tornado_ping"],
-    version="0.3.2",
+    version="0.3.3",
     install_requires=["tornado"],
     description="Tornado ping implementation",
     author="Mark Guagenti",
