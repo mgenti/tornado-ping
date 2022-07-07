@@ -297,7 +297,7 @@ def ping(dest_addr, timeout=10, family=None):
         delay = yield gen.with_timeout(datetime.timedelta(seconds=timeout),
                                        recv_ping)
     except TimeoutError:
-        gen.Return(None)
+        raise gen.Return(None)
     my_socket.close()
 
     raise gen.Return(delay)
