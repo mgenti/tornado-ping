@@ -291,7 +291,11 @@ def ping(dest_addr, timeout=10, family=None):
 
     my_id = uuid.uuid4().int & 0xFFFF
 
-    yield send_one_ping(my_socket, addr, my_id, timeout, family)
+    try:
+        yield send_one_ping(my_socket, addr, my_id, timeout, family)
+    except socket.error:
+        raise gen.Return(None)
+
     try:
         recv_ping = receive_one_ping(my_socket, my_id, timeout)
         delay = yield gen.with_timeout(datetime.timedelta(seconds=timeout),
