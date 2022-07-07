@@ -2,7 +2,7 @@
 from setuptools import setup
 
 setup(
-    name="tornadio-ping",
+    name="tornado-ping",
     packages=["tornado_ping"],
     version="0.3.2",
     install_requires=["tornado"],
