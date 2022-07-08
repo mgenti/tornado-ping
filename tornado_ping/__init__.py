@@ -143,6 +143,14 @@ def checksum(buffer):
     return answer
 
 
+def supports_raw_socket():
+    try:
+        socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.getprotobyname("icmp"))
+        return True
+    except socket.error:
+        return False
+
+
 @gen.coroutine
 def receive_one_ping(my_socket, id_, timeout):
     """
