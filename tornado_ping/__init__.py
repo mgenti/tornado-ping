@@ -74,7 +74,11 @@
 
     June 29, 2022
     Changes by Mark Guagenti
-    - tornadio & python 2.7 adaptation
+    - tornado & python 2.7 adaptation
+
+    October 18, 2023
+    Changes by Mark Guagenti
+    - py2/py3 compatibility
 
     Last commit info:
     ~~~~~~~~~~~~~~~~~
@@ -95,7 +99,7 @@ import tornado
 from tornado import gen
 from tornado.netutil import Resolver
 from tornado.tcpclient import _Connector
-from tornado.concurrent import Future
+from tornado.concurrent import Future, future_set_result_unless_cancelled
 from tornado.platform.auto import set_close_exec
 from tornado.util import TimeoutError
 
@@ -123,13 +127,13 @@ def checksum(buffer):
     count = 0
 
     while count < count_to:
-        this_val = ord(buffer[count + 1]) * 256 + ord(buffer[count])
+        this_val = ord(buffer[count + 1:count + 2]) * 256 + ord(buffer[count:count + 1])
         sum += this_val
         sum &= 0xffffffff  # Necessary?
         count += 2
 
     if count_to < len(buffer):
-        sum += ord(buffer[len(buffer) - 1])
+        sum += ord(buffer[len(buffer) - 1:len(buffer)])
         sum &= 0xffffffff  # Necessary?
 
     sum = (sum >> 16) + (sum & 0xffff)
@@ -161,10 +165,16 @@ def receive_one_ping(my_socket, id_, timeout):
     :return:
     """
     future = Future()
+
+    def on_readable(fd, events):
+        if not future.done():
+            future_set_result_unless_cancelled(future, True)
+
     tornado.ioloop.IOLoop.current().add_handler(my_socket.fileno(),
-                                                lambda fd, events: future.set_result(True),
+                                                on_readable,
                                                 tornado.ioloop.IOLoop.READ)
     yield future
+    tornado.ioloop.IOLoop.current().remove_handler(my_socket.fileno())
 
     try:
         while True:
@@ -189,10 +199,8 @@ def receive_one_ping(my_socket, id_, timeout):
                 data = rec_packet[offset + 8:offset + 8 + struct.calcsize("d")]
                 time_sent = struct.unpack("d", data)[0]
 
-                tornado.ioloop.IOLoop.current().remove_handler(my_socket.fileno())
                 raise gen.Return(time_received - time_sent)
     except (OSError, socket.error):
-        tornado.ioloop.IOLoop.current().remove_handler(my_socket.fileno())
         my_socket.close()
 
         raise TimeoutError("Ping timeout")
@@ -208,7 +216,7 @@ def sendto_ready(packet, socket, future, dest):
         future.set_exception(exc)
     else:
         tornado.ioloop.IOLoop.current().remove_handler(socket.fileno())
-        future.set_result(None)
+        future_set_result_unless_cancelled(future, None)
 
 
 @gen.coroutine
@@ -356,9 +364,9 @@ if __name__ == '__main__':
     def do_ping(host):
         delay = yield ping(host)
         if delay:
-            print "Ping response in %s ms" % (delay * 1000, )
+            print("Ping response in %s ms" % (delay * 1000, ))
         else:
-            print "Timed out"
+            print("Timed out")
 
 
     tornado.ioloop.IOLoop.instance().run_sync(lambda: do_ping('8.8.8.8'))
