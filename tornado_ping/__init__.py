@@ -310,6 +310,7 @@ def ping(dest_addr, timeout=10, family=None):
     try:
         yield send_one_ping(my_socket, addr, my_id, timeout, family)
     except socket.error:
+        my_socket.close()
         raise gen.Return(None)
 
     try:
@@ -317,9 +318,10 @@ def ping(dest_addr, timeout=10, family=None):
         delay = yield gen.with_timeout(datetime.timedelta(seconds=timeout),
                                        recv_ping)
     except TimeoutError:
+        my_socket.close()
         raise gen.Return(None)
-    my_socket.close()
 
+    my_socket.close()
     raise gen.Return(delay)
 
 

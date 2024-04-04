@@ -1,6 +1,6 @@
 [project]
 name = "tornado-ping"
-version = "0.3.8"
+version = "0.3.9"
 authors = [
     { name = "Mark Guagenti", email = "mgenti@gentiweb.com" },
 ]
